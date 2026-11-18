@@ -1,0 +1,291 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Hardened Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'rizvichowdhury535@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'emailRemindersEnabled', 'whatsappRemindersEnabled', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'phone', 'location', 'skinType', 'preferredStyle', 'emailRemindersEnabled', 'whatsappRemindersEnabled', 'encryptedNotes', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 32))
+        && (!('location' in data) || (data.location is string && data.location.size() <= 160))
+        && (!('skinType' in data) || (data.skinType is string && data.skinType.size() <= 64))
+        && (!('preferredStyle' in data) || (data.preferredStyle is string && data.preferredStyle.size() <= 80))
+        && data.emailRemindersEnabled is bool
+        && data.whatsappRemindersEnabled is bool
+        && (!('encryptedNotes' in data) || (data.encryptedNotes is string && data.encryptedNotes.size() <= 4096))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBooking(data) {
+      return data.keys().hasAll(['userId', 'clientName', 'clientEmail', 'clientPhone', 'serviceId', 'serviceTitle', 'date', 'timeSlot', 'totalAmount', 'depositAmount', 'depositStatus', 'paymentMethod', 'transactionRef', 'status', 'reminderSent', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'clientName', 'clientEmail', 'clientPhone', 'serviceId', 'serviceTitle', 'lookId', 'lookTitle', 'date', 'timeSlot', 'totalAmount', 'depositAmount', 'depositStatus', 'paymentMethod', 'transactionRef', 'status', 'encryptedNotes', 'reminderSent', 'createdAt', 'updatedAt'])
+        && data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100
+        && data.clientEmail is string && data.clientEmail.size() >= 3 && data.clientEmail.size() <= 160
+        && data.clientPhone is string && data.clientPhone.size() >= 5 && data.clientPhone.size() <= 32
+        && data.serviceId is string && data.serviceId.size() >= 1 && data.serviceId.size() <= 64 && data.serviceId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.serviceTitle is string && data.serviceTitle.size() >= 1 && data.serviceTitle.size() <= 120
+        && (!('lookId' in data) || (data.lookId is string && data.lookId.size() <= 64))
+        && (!('lookTitle' in data) || (data.lookTitle is string && data.lookTitle.size() <= 120))
+        && data.date is string && data.date.size() == 10 && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.timeSlot is string && data.timeSlot.size() >= 3 && data.timeSlot.size() <= 32
+        && data.totalAmount is number && data.totalAmount > 0 && data.totalAmount <= 500000
+        && data.depositAmount is number && data.depositAmount > 0 && data.depositAmount <= data.totalAmount
+        && data.depositStatus in ['pending', 'paid', 'refunded']
+        && data.paymentMethod in ['bKash', 'Nagad', 'Card', 'Bank']
+        && data.transactionRef is string && data.transactionRef.size() >= 4 && data.transactionRef.size() <= 64
+        && data.status in ['confirmed', 'completed', 'cancelled']
+        && (!('encryptedNotes' in data) || (data.encryptedNotes is string && data.encryptedNotes.size() <= 4096))
+        && data.reminderSent is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBookedSlot(data) {
+      return data.keys().hasAll(['userId', 'bookingId', 'date', 'timeSlot', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'bookingId', 'date', 'timeSlot', 'createdAt'])
+        && data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.bookingId is string && data.bookingId.size() >= 1 && data.bookingId.size() <= 128 && data.bookingId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.date is string && data.date.size() == 10 && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.timeSlot is string && data.timeSlot.size() >= 3 && data.timeSlot.size() <= 32
+        && data.createdAt is timestamp;
+    }
+
+    function isValidConversation(data) {
+      return data.keys().hasAll(['clientId', 'clientName', 'encryptionAlgo', 'keyFingerprint', 'lastMessagePreview', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['clientId', 'clientName', 'encryptionAlgo', 'keyFingerprint', 'lastMessagePreview', 'createdAt', 'updatedAt'])
+        && data.clientId is string && data.clientId.size() >= 1 && data.clientId.size() <= 128 && data.clientId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100
+        && data.encryptionAlgo == 'AES-256-GCM'
+        && data.keyFingerprint is string && data.keyFingerprint.size() >= 8 && data.keyFingerprint.size() <= 64
+        && data.lastMessagePreview is string && data.lastMessagePreview.size() <= 200
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['clientId', 'senderId', 'senderName', 'senderRole', 'ciphertext', 'iv', 'createdAt'])
+        && data.keys().hasOnly(['clientId', 'senderId', 'senderName', 'senderRole', 'ciphertext', 'iv', 'createdAt'])
+        && data.clientId is string && data.clientId.size() >= 1 && data.clientId.size() <= 128 && data.clientId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.senderId is string && data.senderId.size() >= 1 && data.senderId.size() <= 128 && data.senderId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 100
+        && data.senderRole in ['client', 'studio']
+        && data.ciphertext is string && data.ciphertext.size() >= 1 && data.ciphertext.size() <= 8192
+        && data.iv is string && data.iv.size() >= 8 && data.iv.size() <= 64
+        && data.createdAt is timestamp;
+    }
+
+    function isValidReminder(data) {
+      return data.keys().hasAll(['userId', 'bookingId', 'recipientEmail', 'channel', 'subject', 'scheduledFor', 'status', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'bookingId', 'recipientEmail', 'channel', 'subject', 'scheduledFor', 'status', 'sentAt', 'createdAt'])
+        && data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.bookingId is string && data.bookingId.size() >= 1 && data.bookingId.size() <= 128 && data.bookingId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.recipientEmail is string && data.recipientEmail.size() >= 3 && data.recipientEmail.size() <= 160
+        && data.channel in ['email', 'calendar', 'whatsapp']
+        && data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 180
+        && data.scheduledFor is string && data.scheduledFor.size() >= 4 && data.scheduledFor.size() <= 40
+        && data.status in ['scheduled', 'sent']
+        && (!('sentAt' in data) || (data.sentAt is string && data.sentAt.size() <= 40))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTestimonial(data) {
+      return data.keys().hasAll(['userId', 'clientName', 'occasion', 'quote', 'rating', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'clientName', 'occasion', 'quote', 'rating', 'createdAt'])
+        && data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100
+        && data.occasion is string && data.occasion.size() >= 1 && data.occasion.size() <= 100
+        && data.quote is string && data.quote.size() >= 10 && data.quote.size() <= 600
+        && data.rating is number && data.rating >= 1 && data.rating <= 5
+        && data.createdAt is timestamp;
+    }
+
+    // --- Connectivity Check Doc ---
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // --- Admin Registry ---
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    // --- User Profiles (Strict PII Isolation) ---
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && (isOwner(userId) || isAdmin())
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'location', 'skinType', 'preferredStyle', 'emailRemindersEnabled', 'whatsappRemindersEnabled', 'encryptedNotes', 'updatedAt']);
+      allow delete: if isAdmin();
+    }
+
+    // --- Bookings & Deposit Retainers ---
+    match /bookings/{bookingId} {
+      allow get: if isSignedIn() && isValidId(bookingId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isVerifiedUser()
+        && isValidId(bookingId)
+        && isValidBooking(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(bookingId)
+        && isValidBooking(incoming())
+        && (
+          isAdmin() ||
+          (
+            existing().userId == request.auth.uid
+            && existing().status == 'confirmed'
+            && incoming().userId == existing().userId
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'timeSlot', 'status', 'encryptedNotes', 'reminderSent', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin();
+    }
+
+    // --- Public Booked Slots (Zero PII) ---
+    match /bookedSlots/{slotId} {
+      allow get: if isValidId(slotId);
+      allow list: if true;
+      allow create: if isVerifiedUser()
+        && isValidId(slotId)
+        && isValidBookedSlot(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow delete: if isSignedIn() && isValidId(slotId) && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- E2EE Direct Messaging Conversations ---
+    match /conversations/{conversationId} {
+      allow get: if isSignedIn() && isValidId(conversationId) && (existing().clientId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isVerifiedUser()
+        && isValidId(conversationId)
+        && isValidConversation(incoming())
+        && incoming().clientId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(conversationId)
+        && isValidConversation(incoming())
+        && (existing().clientId == request.auth.uid || isAdmin())
+        && incoming().clientId == existing().clientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['lastMessagePreview', 'updatedAt']);
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow get: if isSignedIn()
+          && isValidId(conversationId)
+          && isValidId(messageId)
+          && (get(/databases/$(database)/documents/conversations/$(conversationId)).data.clientId == request.auth.uid || isAdmin());
+        allow list: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+        allow create: if isVerifiedUser()
+          && isValidId(conversationId)
+          && isValidId(messageId)
+          && isValidMessage(incoming())
+          && incoming().senderId == request.auth.uid
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/conversations/$(conversationId))
+          && (
+            (incoming().senderRole == 'client' && get(/databases/$(database)/documents/conversations/$(conversationId)).data.clientId == request.auth.uid && incoming().clientId == request.auth.uid) ||
+            (incoming().senderRole == 'studio' && isAdmin() && incoming().clientId == get(/databases/$(database)/documents/conversations/$(conversationId)).data.clientId)
+          );
+        allow update, delete: if false;
+      }
+    }
+
+    // --- Automated Email & Session Reminders ---
+    match /reminders/{reminderId} {
+      allow get: if isSignedIn() && isValidId(reminderId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isVerifiedUser()
+        && isValidId(reminderId)
+        && isValidReminder(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/bookings/$(incoming().bookingId));
+      allow update: if isVerifiedUser()
+        && isValidId(reminderId)
+        && isValidReminder(incoming())
+        && (isAdmin() || existing().userId == request.auth.uid)
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'sentAt']);
+      allow delete: if isAdmin();
+    }
+
+    // --- Verified Client Testimonials ---
+    match /testimonials/{testimonialId} {
+      allow get: if isValidId(testimonialId);
+      allow list: if true;
+      allow create: if isVerifiedUser()
+        && isValidId(testimonialId)
+        && isValidTestimonial(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if isAdmin();
+    }
+  }
+}
